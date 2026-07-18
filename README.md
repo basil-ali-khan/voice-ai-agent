@@ -23,25 +23,42 @@ SQLite is appropriate for this time-boxed assessment and is mounted on the Compo
 
 ```bash
 cp .env.example .env
-# Fill in Retell and ngrok values. For bare local API development, optionally add:
-# DATABASE_URL=sqlite:///./data/patients.db
+# Fill in the ngrok values. RETELL_API_KEY is retained for the planned signed-webhook mode.
 /home/basilkhan/carecloud/.venv/bin/python -m pytest -q
 docker compose up --build
 ```
 
-The API binds to `http://127.0.0.1:8000`. With the configured stable ngrok domain, public health and docs are at `https://YOUR_NGROK_DOMAIN/health` and `https://YOUR_NGROK_DOMAIN/docs`.
+The API binds to `http://127.0.0.1:8000`. The deployed public health and docs endpoints are [health](https://rind-rebuff-elf.ngrok-free.dev/health) and [docs](https://rind-rebuff-elf.ngrok-free.dev/docs).
 
 Never run `docker compose down -v`: the `-v` flag deletes the persistent patient database.
+
+## Environment
+
+Copy `.env.example` to `.env`; `.env` is intentionally ignored by Git.
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `NGROK_DOMAIN` | Yes for the public tunnel | Reserved ngrok domain, without `https://`. |
+| `NGROK_AUTHTOKEN` | Yes for the public tunnel | Authenticates the ngrok container. |
+| `RETELL_API_KEY` | No in the current evaluation mode | Reserved for HMAC verification when signed webhook mode is restored. |
+| `LOG_LEVEL` | No | Application logging level; defaults to `INFO`. |
+
+Docker Compose supplies `DATABASE_URL=sqlite:////data/patients.db` and mounts that path on the `patient_data` named volume. For bare local API development, set `DATABASE_URL=sqlite:///./data/patients.db`.
+
+## Live Demo
+
+- Voice agent browser test: [Open the Retell agent](https://agent.retellai.com/orb/agent_9c87894631095482713bd61d1b?token=ffab042c41005ac1c77e6305d04b896d).
+- Public API base URL: `https://rind-rebuff-elf.ngrok-free.dev`.
 
 ## Retell Configuration
 
 1. Create an inbound Retell agent and paste the prompt from `app/voice/prompt.py`.
 2. Add a POST custom function named `register_patient` using `config/retell-register-patient.schema.json`.
-3. Set its URL to `https://YOUR_NGROK_DOMAIN/voice/register-patient`, use the normal Retell payload envelope (not `args` only), and configure the Retell signing secret/API key as `RETELL_API_KEY`.
+3. Set its URL to `https://rind-rebuff-elf.ngrok-free.dev/voice/register-patient` and use Retell's normal payload envelope (not `args` only).
 4. Allow the agent to speak after function execution, bind a purchased U.S. number, and add Retell's built-in end-call tool.
 5. Place a fictional-data test call that includes an invalid value, a correction, optional-field decline, full readback, and explicit confirmation.
 
-The webhook accepts an HMAC-SHA256 signature of the raw request body in `X-Retell-Signature` (hex or base64). Confirm Retell's current signing format in the dashboard/provider documentation before production use.
+The current evaluation deployment accepts the normal Retell envelope and a flat payload variant used by the active voice-provider integration. Signature validation is intentionally bypassed in `app/voice/routes.py` so the deployed tunnel can receive these tool calls. Do not expose this mode beyond the assessment: restore `X-Retell-Signature` HMAC-SHA256 verification with `RETELL_API_KEY` before any broader deployment.
 
 ## API
 
@@ -69,6 +86,17 @@ docker compose logs --tail=100 api ngrok
 
 Only SSH needs an inbound EC2 security-group rule because ngrok makes the outbound tunnel. Keep the EBS root volume on instance termination and use a reserved ngrok domain so the Retell URL remains stable. The Compose restart policies restore services after a reboot.
 
+## Review Checklist
+
+The repository and deployment are ready for a reviewer once the following operational details are supplied directly with the submission:
+
+- Repository URL and reviewer access, if the repository is private.
+- The provisioned U.S. phone number to call.
+- The [live ngrok base URL](https://rind-rebuff-elf.ngrok-free.dev) and [voice agent browser test](https://agent.retellai.com/orb/agent_9c87894631095482713bd61d1b?token=ffab042c41005ac1c77e6305d04b896d).
+- A note that all test calls must use fictional patient data.
+
+Before handing over the deployment, place one end-to-end test call and confirm that the resulting record appears at `GET /patients`.
+
 ## Verification
 
 ```bash
@@ -76,4 +104,4 @@ Only SSH needs an inbound EC2 security-group rule because ngrok makes the outbou
 curl http://127.0.0.1:8000/health
 ```
 
-The tests cover validation, create/read/filter/update/soft-delete, SQLite persistence across requests, Retell signature rejection, and Retell call-ID idempotency. A real phone number, Retell account, EC2 host, and ngrok domain must be provisioned outside source control and entered above before review.
+A real phone number, voice-provider account, EC2 host, and ngrok domain must be provisioned outside source control.
