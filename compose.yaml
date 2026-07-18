@@ -1,0 +1,29 @@
+services:
+  api:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: sqlite:////data/patients.db
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - patient_data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  ngrok:
+    image: ngrok/ngrok:alpine
+    restart: unless-stopped
+    env_file: .env
+    command: http api:8000 --domain=${NGROK_DOMAIN}
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  patient_data:
