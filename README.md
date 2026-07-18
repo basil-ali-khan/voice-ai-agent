@@ -21,69 +21,96 @@ SQLite is appropriate for this time-boxed assessment and is mounted on the Compo
 
 ## Local Setup
 
-```bash
-cp .env.example .env
-# Fill in the values
-python -m pytest -q
-docker compose up --build
+# CareCloud Voice Patient Registration
+
+CareCloud is a conversational patient-registration experience that collects demographics naturally, confirms the complete record with the caller, and persists the confirmed registration for retrieval through a REST API.
+
+**Use fictional data only.**
+
+## Try It
+
+1. [Open the live voice agent](https://agent.retellai.com/orb/agent_9c87894631095482713bd61d1b?token=ffab042c41005ac1c77e6305d04b896d).
+2. Register a fictional patient. The agent collects required demographics in any order, offers optional information, reads the complete record back, and saves only after explicit confirmation.
+3. Inspect the persisted registration at the [live API documentation](https://rind-rebuff-elf.ngrok-free.dev/docs) or query [the patient list](https://rind-rebuff-elf.ngrok-free.dev/patients).
+
+The public health check is available at [https://rind-rebuff-elf.ngrok-free.dev/health](https://rind-rebuff-elf.ngrok-free.dev/health).
+The free ngrok plan displays a one-time browser interstitial; select **Visit Site** to continue to the API. It does not affect voice-provider webhook requests.
+
+For a representative evaluation, provide an invalid value, correct a field, decline the optional group, and confirm the final readback. A registration is only created after that confirmation.
+
+## What It Delivers
+
+- Natural-language voice intake for required U.S. patient demographics.
+- Server-side validation of dates, names, phone numbers, states, ZIP codes, and email addresses.
+- Optional insurance, emergency-contact, and preferred-language collection.
+- Confirmation-before-save and retry-safe voice tool handling.
+- Persistent registrations with list, filter, read, partial update, and soft-delete REST operations.
+
+## Architecture
+
+```text
+Caller -> Retell voice agent -> POST /voice/register-patient -> Patient service -> SQLite volume
+Reviewer/API client ----------> REST /patients ------------> Patient service -> SQLite volume
 ```
 
-The API binds to `http://127.0.0.1:8000`. The deployed public health and docs endpoints are [health](https://rind-rebuff-elf.ngrok-free.dev/health) and [docs](https://rind-rebuff-elf.ngrok-free.dev/docs).
+FastAPI provides the HTTP adapters, SQLAlchemy owns persistence, and SQLite is mounted on a Docker Compose named volume. This keeps registrations intact across container recreation while keeping the assessment deployment small and easy to run.
 
-Never run `docker compose down -v`: the `-v` flag deletes the persistent patient database.
-
-## Environment
-
-Copy `.env.example` to `.env`; `.env` is intentionally ignored by Git.
-
-| Variable | Required | Purpose |
-| --- | --- | --- |
-| `NGROK_DOMAIN` | Yes for the public tunnel | Reserved ngrok domain, without `https://`. |
-| `NGROK_AUTHTOKEN` | Yes for the public tunnel | Authenticates the ngrok container. |
-| `RETELL_API_KEY` | No in the current evaluation mode | Reserved for HMAC verification when signed webhook mode is restored. |
-| `LOG_LEVEL` | No | Application logging level; defaults to `INFO`. |
-
-Docker Compose supplies `DATABASE_URL=sqlite:////data/patients.db` and mounts that path on the `patient_data` named volume. For bare local API development, set `DATABASE_URL=sqlite:///./data/patients.db`.
-
-## Live Demo
-
-- Voice agent browser test: [Open the Retell agent](https://agent.retellai.com/orb/agent_9c87894631095482713bd61d1b?token=ffab042c41005ac1c77e6305d04b896d).
-- Public API base URL: `https://rind-rebuff-elf.ngrok-free.dev`.
-
-## Retell Configuration
-
-1. Create an inbound Retell agent and paste the prompt from `app/voice/prompt.py`.
-2. Add a POST custom function named `register_patient` using `config/retell-register-patient.schema.json`.
-3. Set its URL to `https://rind-rebuff-elf.ngrok-free.dev/voice/register-patient` and use Retell's normal payload envelope (not `args` only).
-4. Allow the agent to speak after function execution, bind a purchased U.S. number, and add Retell's built-in end-call tool.
-5. Place a fictional-data test call that includes an invalid value, a correction, optional-field decline, full readback, and explicit confirmation.
-
-The current evaluation deployment accepts the normal Retell envelope and a flat payload variant used by the active voice-provider integration. Signature validation is intentionally bypassed in `app/voice/routes.py` so the deployed tunnel can receive these tool calls. Do not expose this mode beyond the assessment: restore `X-Retell-Signature` HMAC-SHA256 verification with `RETELL_API_KEY` before any broader deployment.
+The voice prompt and custom-function schema are version-controlled in [app/voice/prompt.py](app/voice/prompt.py) and [config/retell-register-patient.schema.json](config/retell-register-patient.schema.json). The HTTP, service, and repository layers remain separate so voice-provider behavior does not leak into patient persistence.
 
 ## API
 
-All REST responses use `{ "data": ..., "error": null }` on success and `{ "data": null, "error": { ... } }` on domain or validation errors.
+All API responses use a consistent envelope: `{ "data": ..., "error": null }` for successful requests and `{ "data": null, "error": { ... } }` for domain or validation errors.
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/patients` | List active patients; filter by `last_name`, `date_of_birth`, or `phone_number`. |
+| `GET` | `/patients/{patient_id}` | Retrieve one active patient. |
+| `POST` | `/patients` | Create a patient registration. |
+| `PUT` | `/patients/{patient_id}` | Partially update a patient. |
+| `DELETE` | `/patients/{patient_id}` | Soft-delete a patient. |
+| `GET` | `/health` | Confirm API and database availability. |
+
+Example request against the live deployment:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/patients \
-  -H 'Content-Type: application/json' \
-  -d '{"first_name":"Jane","last_name":"Doe","date_of_birth":"02/14/1988","sex":"Female","phone_number":"415-555-2671","address_line_1":"10 Market Street","city":"San Francisco","state":"CA","zip_code":"94105"}'
-
-curl 'http://127.0.0.1:8000/patients?last_name=Doe'
+curl 'https://rind-rebuff-elf.ngrok-free.dev/patients?last_name=Doe'
 ```
 
-Endpoints are `GET /patients`, filtered `GET /patients`, `GET /patients/{patient_id}`, `POST /patients`, partial `PUT /patients/{patient_id}`, soft `DELETE /patients/{patient_id}`, and `GET /health`.
+## Run Locally
 
-## EC2 Deployment
-
-Provision an Ubuntu EC2 instance, install Docker Engine plus the Compose plugin, then clone the repository and create a private `.env` from `.env.example` with `chmod 600 .env`.
+Requirements: Docker Engine with the Compose plugin. For local source-level testing, use Python 3.12 or newer.
 
 ```bash
-docker compose up -d --build
-docker compose ps
-docker compose logs --tail=100 api ngrok
+cp .env.example .env
+# Set NGROK_DOMAIN and NGROK_AUTHTOKEN in .env for a public voice webhook.
+docker compose up --build
 ```
 
-Only SSH needs an inbound EC2 security-group rule because ngrok makes the outbound tunnel. Keep the EBS root volume on instance termination and use a reserved ngrok domain so the Retell URL remains stable. The Compose restart policies restore services after a reboot.
+The local API is bound to `http://127.0.0.1:8000`; ngrok exposes it publicly when configured. Compose sets `DATABASE_URL=sqlite:////data/patients.db` and persists it in the `patient_data` named volume.
+
+```bash
+python3.12 -m venv .venv
+.venv/bin/pip install -e '.[dev]'
+.venv/bin/python -m pytest -q
+```
+
+Use `docker compose down` to stop local services. Do not add `-v` unless intentionally deleting the local patient database.
+
+## Configuration
+
+Copy `.env.example` to `.env`; it is excluded from source control.
+
+| Variable | Purpose |
+| --- | --- |
+| `NGROK_DOMAIN` | Reserved ngrok domain, without `https://`. |
+| `NGROK_AUTHTOKEN` | Authenticates the ngrok tunnel. |
+| `RETELL_API_KEY` | Reserved for future signed-webhook verification. |
+| `LOG_LEVEL` | Application log level; defaults to `INFO`. |
+
+For a hosted deployment, run the same Compose stack on the host with a private `.env`. The API listens only on loopback; ngrok creates the outbound public tunnel. Both services use `unless-stopped` restart policies.
+
+## Assessment Scope
+
+This is a time-boxed assessment implementation, not a HIPAA-ready product. It intentionally does not include authentication, audit logging, encryption-at-rest configuration, a BAA, production monitoring, or webhook-signature verification. A production implementation would use PostgreSQL with migrations, authenticated access, redacted audit logs, provider webhook verification, and durable asynchronous retry handling.
 
 
